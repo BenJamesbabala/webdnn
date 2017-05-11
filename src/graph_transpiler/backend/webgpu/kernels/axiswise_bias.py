@@ -10,23 +10,22 @@ from graph_transpiler.graph.operators.axiswise_bias import AxiswiseBias
 from graph_transpiler.graph.variables.attributes.order import OrderHWNC, OrderNHWC, OrderNC
 
 template = """
-kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
-                          device float *data_buffer[[buffer(1)]],
-                          const device int * %%META_NAME%% [[buffer(2)]],
+kernel void %%FUNC_NAME%%(device float *data_buffer[[buffer(0)]],
+                          const device int * %%META_NAME%% [[buffer(1)]],
                           uint index[[thread_position_in_grid]],
                           uint num_threads[[threads_per_grid]])
 {
     const device float *X = data_buffer + %%META_LOAD(axiswise_bias_X_offset)%%;
+    const device float *B = data_buffer + %%META_LOAD(axiswise_bias_B_offset)%%;
     device float *Y = data_buffer + %%META_LOAD(axiswise_bias_Y_offset)%%;
-    const device float *B = weight_buffer + %%META_LOAD(axiswise_bias_B_offset)%%;
     const int N = %%META_LOAD(axiswise_bias_N)%%;
     const int C = %%META_LOAD(axiswise_bias_C)%%;
   
     for (int gid = index; gid < N * C; gid += num_threads) {
         int c = gid % C;
         int n = gid / C;
-
         float result = X[gid] + B[c];
+
         Y[n * C + c] = %%INLINE(result)%%;
     }
 }
@@ -34,12 +33,11 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
 
 
 def axiswise_bias(op: AxiswiseBias,
-                  constants_layout: MemoryLayout,
-                  variables_layout: MemoryLayout,
+                  memory_layout: MemoryLayout,
                   metabuffer_injector: MetaBufferInjector = None) -> List[Kernel]:
-    x = variables_layout[op.inputs["x"]]
-    b = constants_layout[op.inputs["b"]]
-    y = variables_layout[op.outputs["y"]]
+    x = memory_layout[op.inputs["x"]]
+    b = memory_layout[op.inputs["b"]]
+    y = memory_layout[op.outputs["y"]]
 
     if metabuffer_injector is None:
         metabuffer_injector = MetaBufferInjector()

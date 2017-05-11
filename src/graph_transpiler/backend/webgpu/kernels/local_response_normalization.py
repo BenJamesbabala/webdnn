@@ -9,14 +9,14 @@ from graph_transpiler.graph.operators.local_response_normalization import LocalR
 from graph_transpiler.graph.variables.attributes.order import OrderNHWC
 
 template = """
-kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
-                          device float *data_buffer[[buffer(1)]],
-                          const device int * %%META_NAME%% [[buffer(2)]],
+kernel void %%FUNC_NAME%%(device float *data_buffer[[buffer(0)]],
+                          const device int * %%META_NAME%% [[buffer(1)]],
                           uint index[[thread_position_in_grid]],
                           uint num_threads[[threads_per_grid]])
 {
     const device float *X = data_buffer + %%META_LOAD(local_response_normalization_X_offset)%%;
     device float *Y = data_buffer + %%META_LOAD(local_response_normalization_Y_offset)%%;
+
     const int N = %%META_LOAD(local_response_normalization_N)%%;
     const int H = %%META_LOAD(local_response_normalization_H)%%;
     const int W = %%META_LOAD(local_response_normalization_W)%%;
@@ -26,8 +26,6 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
     const float Palpha = *((const device float *)(& %%META_LOAD(local_response_normalization_param_alpha)%%));
     const float Pmbeta = *((const device float *)(& %%META_LOAD(local_response_normalization_param_minus_beta)%%));
     
-    //%%INITIALIZER_ATTACHABLE_PLACEHOLDER%%
-
     for (int gid = index; gid < N * H * W * C; gid += num_threads) {
         const int c = gid % C;
         const int w = gid / C % W;
@@ -46,7 +44,6 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
         float scale = powr(sq_sum * Palpha + Pk, Pmbeta);
         float v = X[gid] * scale;
         
-        //Y[gid] = %%CHANNELWISE_ATTACHABLE(v, n)%%;
         Y[gid] = v;
     }
 }
@@ -55,11 +52,10 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
 
 # noinspection PyUnusedLocal
 def local_response_normalization(op: LocalResponseNormalization,
-                                 constants_layout: MemoryLayout,
-                                 variables_layout: MemoryLayout,
+                                 memory_layout: MemoryLayout,
                                  metabuffer_injector: MetaBufferInjector = None) -> List[Kernel]:
-    x = variables_layout[op.inputs["x"]]
-    y = variables_layout[op.outputs["y"]]
+    x = memory_layout[op.inputs["x"]]
+    y = memory_layout[op.outputs["y"]]
 
     assert x.variable.order == OrderNHWC
     assert y.variable.order == OrderNHWC

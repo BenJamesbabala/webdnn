@@ -18,16 +18,15 @@ void %%CORE_NAME%%(const device float*, const device float*, device float*,
 
 def generate_template(transpose_A, transpose_B, with_bias=False):
     return """
-kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
-                          device float *data_buffer[[buffer(1)]],
-                          const device int * %%META_NAME%% [[buffer(2)]],
+kernel void %%FUNC_NAME%%(device float *data_buffer[[buffer(0)]],
+                          const device int * %%META_NAME%% [[buffer(1)]],
                           ushort index[[thread_index_in_threadgroup]],
                           ushort2 group_position[[threadgroup_position_in_grid]])
 {
     device float *C = data_buffer + %%META_LOAD(sgemm_C_offset)%%;
 
     const device float *load_target = (index & 32) 
-        ? (weight_buffer + %%META_LOAD(sgemm_B_offset)%%) 
+        ? (data_buffer + %%META_LOAD(sgemm_B_offset)%%) 
         : (data_buffer + %%META_LOAD(sgemm_A_offset)%%);
 
     const int M = %%META_LOAD(sgemm_M)%%;
@@ -48,7 +47,7 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
         .replace("%%B_STRIDE_K%%", "N" if transpose_B else "1") \
         .replace("%%A_STRIDE_MN%%", "K" if transpose_A else "1") \
         .replace("%%B_STRIDE_MN%%", "1" if transpose_B else "K") \
-        .replace("%%BIAS%%", "weight_buffer + %%META_LOAD(sgemm_b_offset)%%" if with_bias else "nullptr")
+        .replace("%%BIAS%%", "data_buffer + %%META_LOAD(sgemm_b_offset)%%" if with_bias else "nullptr")
 
 
 def generate_sgemm_core(with_bias=False):
@@ -249,12 +248,11 @@ void %%CORE_NAME%%(const device float *load_target,
 
 
 def sgemm(op: Sgemm,
-          constants_layout: MemoryLayout,
-          variables_layout: MemoryLayout,
+          memory_layout: MemoryLayout,
           metabuffer_injector: MetaBufferInjector = None) -> List[Kernel]:
-    A = variables_layout[op.inputs["A"]] if op.inputs["A"] in variables_layout else constants_layout[op.inputs["A"]]
-    B = variables_layout[op.inputs["B"]] if op.inputs["B"] in variables_layout else constants_layout[op.inputs["B"]]
-    C = variables_layout[op.outputs["C"]]
+    A = memory_layout[op.inputs["A"]]
+    B = memory_layout[op.inputs["B"]]
+    C = memory_layout[op.outputs["C"]]
 
     if metabuffer_injector is None:
         metabuffer_injector = MetaBufferInjector()
@@ -272,7 +270,7 @@ def sgemm(op: Sgemm,
 
     if with_bias:
         metabuffer_injector.register({
-            "sgemm_b_offset": constants_layout[op.inputs["b"]].offset
+            "sgemm_b_offset": memory_layout[op.inputs["b"]].offset
         })
 
     inline_injector = InlineInjector()

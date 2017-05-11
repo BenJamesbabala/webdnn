@@ -29,8 +29,7 @@ from graph_transpiler.graph.operators.flatten import Flatten
 
 
 def flatten(op: Flatten,
-            constants_layout: MemoryLayout,
-            variables_layout: MemoryLayout,
+            memory_layout: MemoryLayout,
             metabuffer_injector: MetaBufferInjector = None) -> List[Kernel]:
     return []
     # x = variables_layout[op.inputs["x"]]

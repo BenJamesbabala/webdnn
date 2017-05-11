@@ -7,9 +7,8 @@ from graph_transpiler.backend.webgpu.meta_buffer_injector import MetaBufferInjec
 from graph_transpiler.graph.operators.scalar_affine import ScalarAffine
 
 template = """
-kernel void %%FUNC_NAME%%(const device float *param_buffer[[buffer(0)]],
-                          device float *data_buffer[[buffer(1)]],
-                          const device int * %%META_NAME%% [[buffer(2)]],
+kernel void %%FUNC_NAME%%(device float *data_buffer[[buffer(0)]],
+                          const device int * %%META_NAME%% [[buffer(1)]],
                           uint index[[thread_position_in_grid]],
                           uint num_threads[[threads_per_grid]])
 {
@@ -23,6 +22,7 @@ kernel void %%FUNC_NAME%%(const device float *param_buffer[[buffer(0)]],
     for (int gid = index; gid < N; gid += num_threads) {
         float result = X[gid];
         result = result * scale + bias;
+        
         Y[gid] = result;
     }
 }
@@ -31,11 +31,10 @@ kernel void %%FUNC_NAME%%(const device float *param_buffer[[buffer(0)]],
 
 # noinspection PyUnusedLocal
 def scalar_affine(op: ScalarAffine,
-                  constants_layout: MemoryLayout,
-                  variables_layout: MemoryLayout,
+                  memory_layout: MemoryLayout,
                   metabuffer_injector: MetaBufferInjector = None) -> List[Kernel]:
-    x = variables_layout[op.inputs["x"]]
-    y = variables_layout[op.outputs["y"]]
+    x = memory_layout[op.inputs["x"]]
+    y = memory_layout[op.outputs["y"]]
     assert x.variable.shape == y.variable.shape
 
     if metabuffer_injector is None:

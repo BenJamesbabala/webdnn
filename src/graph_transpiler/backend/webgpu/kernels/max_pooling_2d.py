@@ -9,9 +9,8 @@ from graph_transpiler.graph.operators.max_pooling_2d import MaxPooling2D
 from graph_transpiler.graph.variables.attributes.order import OrderNHWC
 
 template = """
-kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
-                          device float *data_buffer[[buffer(1)]],
-                          const device int * %%META_NAME%% [[buffer(2)]],
+kernel void %%FUNC_NAME%%(device float *data_buffer[[buffer(0)]],
+                          const device int * %%META_NAME%% [[buffer(1)]],
                           uint index[[thread_position_in_grid]],
                           uint num_threads[[threads_per_grid]])
 {
@@ -26,8 +25,6 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
     const int K = %%META_LOAD(max_pooling_2d_K)%%;
     const int S = %%META_LOAD(max_pooling_2d_S)%%;
     const int P = %%META_LOAD(max_pooling_2d_P)%%;
-    
-    //%%INITIALIZER_ATTACHABLE_PLACEHOLDER%%
 
     for (int gid = index; gid < N * H2 * W2 * C; gid += num_threads) {
         const int c = gid % C;
@@ -48,7 +45,6 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
             }
         }
 
-        //Y[gid] = %%CHANNELWISE_ATTACHABLE(v, n)%%;
         Y[gid] = v;
     }
 }
@@ -57,11 +53,10 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
 
 # noinspection PyUnusedLocal
 def max_pooling_2d(op: MaxPooling2D,
-                   constants_layout: MemoryLayout,
-                   variables_layout: MemoryLayout,
+                   memory_layout: MemoryLayout,
                    metabuffer_injector: MetaBufferInjector = None) -> List[Kernel]:
-    x = variables_layout[op.inputs["x"]]
-    y = variables_layout[op.outputs["y"]]
+    x = memory_layout[op.inputs["x"]]
+    y = memory_layout[op.outputs["y"]]
 
     assert x.variable.order == OrderNHWC
     assert y.variable.order == OrderNHWC

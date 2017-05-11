@@ -9,23 +9,21 @@ from graph_transpiler.graph.operators.axiswise_scale import AxiswiseScale
 from graph_transpiler.graph.variables.attributes.order import OrderNHWC, OrderNC, OrderHWNC
 
 template = """
-kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
-                          device float *data_buffer[[buffer(1)]],
-                          const device int * %%META_NAME%% [[buffer(2)]],
+kernel void %%FUNC_NAME%%(device float *data_buffer[[buffer(0)]],
+                          const device int * %%META_NAME%% [[buffer(1)]],
                           uint index[[thread_position_in_grid]],
                           uint num_threads[[threads_per_grid]])
 {
     const device float *X = data_buffer + %%META_LOAD(axiswise_scale_X_offset)%%;
+    const device float *S = data_buffer + %%META_LOAD(axiswise_scale_S_offset)%%;
     device float *Y = data_buffer + %%META_LOAD(axiswise_scale_Y_offset)%%;
-    const device float *S = weight_buffer + %%META_LOAD(axiswise_scale_S_offset)%%;
     const int N = %%META_LOAD(axiswise_scale_N)%%;
     const int C = %%META_LOAD(axiswise_scale_C)%%;
   
     for (int gid = index; gid < N; gid += num_threads) {
         int c = gid % C;
-
         float result = X[gid] * S[c];
-        //Y[gid] = %%CHANNELWISE_ATTACHABLE(result, c)%%;
+
         Y[gid] = result;
     }
 }
@@ -33,12 +31,11 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
 
 
 def axiswise_scale(op: AxiswiseScale,
-                   constants_layout: MemoryLayout,
-                   variables_layout: MemoryLayout,
+                   memory_layout: MemoryLayout,
                    metabuffer_injector: MetaBufferInjector = None) -> List[Kernel]:
-    x = variables_layout[op.inputs["x"]]
-    s = constants_layout[op.inputs["s"]]
-    y = variables_layout[op.outputs["y"]]
+    x = memory_layout[op.inputs["x"]]
+    s = memory_layout[op.inputs["s"]]
+    y = memory_layout[op.outputs["y"]]
 
     if metabuffer_injector is None:
         metabuffer_injector = MetaBufferInjector()

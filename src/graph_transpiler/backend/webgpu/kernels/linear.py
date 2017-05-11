@@ -9,21 +9,18 @@ from graph_transpiler.graph.operators.linear import Linear
 from graph_transpiler.graph.variables.attributes.order import OrderNC, OrderNHWC, OrderCN, OrderHWCN
 
 template = """
-kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
-                          device float *data_buffer[[buffer(1)]],
-                          const device int * %%META_NAME%% [[buffer(2)]],
+kernel void %%FUNC_NAME%%(device float *data_buffer[[buffer(0)]],
+                          const device int * %%META_NAME%% [[buffer(1)]],
                           uint index[[thread_position_in_grid]],
                           uint num_threads[[threads_per_grid]])
 {
     const device float *X = data_buffer + %%META_LOAD(linear_X_offset)%%;
+    const device float *W = data_buffer + %%META_LOAD(linear_W_offset)%%;
     device float *Y = data_buffer + %%META_LOAD(linear_Y_offset)%%;
-    const device float *W = weight_buffer + %%META_LOAD(linear_W_offset)%%;
     const int M = %%META_LOAD(linear_M)%%;
     const int N = %%META_LOAD(linear_N)%%;
     const int K = %%META_LOAD(linear_K)%%;
     
-    //%%INITIALIZER_ATTACHABLE_PLACEHOLDER%%
-  
     for (int gid = index; gid < M * N; gid += num_threads) {
         int n = gid % N;
         int m = gid / N;
@@ -33,7 +30,6 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
             sum += X[m * K + k] * W[k * N + n];
         }
 
-        //Y[gid] = %%CHANNELWISE_ATTACHABLE(sum, n)%%;
         Y[gid] = sum;
     }
 }
@@ -41,12 +37,11 @@ kernel void %%FUNC_NAME%%(const device float *weight_buffer[[buffer(0)]],
 
 
 def linear(op: Linear,
-           constants_layout: MemoryLayout,
-           variables_layout: MemoryLayout,
+           memory_layout: MemoryLayout,
            metabuffer_injector: MetaBufferInjector = None) -> List[Kernel]:
-    x = variables_layout[op.inputs["x"]]
-    w = constants_layout[op.inputs["w"]]
-    y = variables_layout[op.outputs["y"]]
+    x = memory_layout[op.inputs["x"]]
+    w = memory_layout[op.inputs["w"]]
+    y = memory_layout[op.outputs["y"]]
 
     assert x.variable.order == OrderNC or x.variable.order == OrderNHWC
     assert w.variable.order == OrderCN or w.variable.order == OrderHWCN

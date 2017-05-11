@@ -1,4 +1,4 @@
-from typing import Dict, Tuple, List, Set
+from typing import Dict, List, Set
 
 import numpy as np
 
@@ -53,36 +53,37 @@ class Allocation(json.SerializableMixin, IAllocation):
 
 class MemoryLayout(json.SerializableMixin, IMemoryLayout):
     size: int
-    __dict__: Dict[str, Allocation]
+    allocations: Dict[str, Allocation]
+    data: np.array
 
     def __init__(self):
-        self.__dict__ = {}
+        self.allocations = {}
 
     def _to_serializable_(self):
         return {
             "total_size": self.size,
-            "allocation": {a.variable.name: a for _, a in self.__dict__.items()}
+            "allocation": {a.variable.name: a for _, a in self.allocations.items()}
         }
 
     def __len__(self):
-        return len(self.__dict__)
+        return len(self.allocations)
 
     def __getitem__(self, var: Variable):
-        return self.__dict__[var.name]
+        return self.allocations[var.name]
 
     def __contains__(self, var: Variable):
-        return var.name in self.__dict__
+        return var.name in self.allocations
 
     def append(self, var: Variable, offset: int = -1):
         if offset == -1:
             offset = self.size
 
-        self.__dict__[var.name] = Allocation(var, offset)
+        self.allocations[var.name] = Allocation(var, offset)
 
     @property
     def size(self) -> int:
         size = 0
-        for _, a in self.__dict__.items():
+        for a in self.allocations.values():
             size = max(a.offset + a.size, size)
 
         return size
@@ -92,40 +93,15 @@ class Allocator:
     layout: MemoryLayout
 
     @classmethod
-    def allocate(cls, graph: Graph) -> Tuple[MemoryLayout, MemoryLayout, np.array]:
+    def allocate(cls, graph: Graph) -> MemoryLayout:
         variables = set(traverse.listup_variables(graph))
         for i, v in enumerate(variables):
             v.name = f"v{i}"
 
-        constants = set(traverse.filter_nodes(variables, Constant))  # type: Set[ConstantVariable]
-        variables = variables.difference(constants)
-
-        variables = list(variables)
-        constants = list(constants)
-
-        constants_layout, data = cls.allocate_constants(constants)
-        variables_layout = cls.allocate_variables(graph, variables)
-        return variables_layout, constants_layout, data
+        return cls.allocate_variables(graph, list(variables))
 
     @classmethod
-    def allocate_constants(cls, constants: List[ConstantVariable]) -> Tuple[MemoryLayout, np.ndarray]:
-        layout = MemoryLayout()
-
-        for constant in constants:
-            if constant in layout:
-                continue
-
-            layout.append(constant)
-
-        buffer = np.zeros(layout.size, dtype=np.float32)
-        for constant in constants:
-            allocation = layout[constant]
-            buffer[allocation.offset:allocation.offset + allocation.size] = constant.data.flatten()
-
-        return layout, buffer
-
-    @classmethod
-    def allocate_variables(cls, graph: Graph, variables: List[Variable]) -> MemoryLayout:
+    def allocate_variables(cls, graph: Graph, variables: List[Variable]):
         ops = traverse.listup_operators(graph)
         layout = MemoryLayout()
 
@@ -146,6 +122,15 @@ class Allocator:
             for variable in variables:
                 layout.append(variable)
 
+        data = np.zeros(layout.size, dtype=np.float32)
+        for var in variables:
+            if not isinstance(var, ConstantVariable):
+                continue
+            allocation = layout[var]
+            data[allocation.offset:allocation.offset + allocation.size] = var.data.flatten()
+
+        layout.data = data
+
         if graph_transpiler.util.flags.VISUALIZE_MEMORY_ALLOCATION:
             _visualize_allocation(layout, graph, variables, ops)
 
@@ -161,17 +146,17 @@ def _analyse_variable_lifetime(graph: Graph, ops: List[Operator], variables: Lis
     retain_count: Dict[Variable, int] = {v: 0 for v in variables}
     allocated: Set[Variable] = set()
 
-    for var in graph.inputs:
+    for var in variables:
         if isinstance(var, ConstantVariable):
-            continue
+            analysis_table[var] = AllocationAnalysisData(var, 0, LIFETIME_FOREVER)
+            allocated.add(var)
 
+    for var in graph.inputs:
         analysis_table[var] = AllocationAnalysisData(var, 0, LIFETIME_FOREVER)
+        allocated.add(var)
 
     for t, op in enumerate(ops):
         for var in op.outputs.values():
-            if isinstance(var, ConstantVariable):
-                continue
-
             if var not in allocated:
                 # 新規に確保する
                 flag_allocated = False
@@ -211,15 +196,12 @@ def _analyse_variable_lifetime(graph: Graph, ops: List[Operator], variables: Lis
                     raise ValueError("[WebGPUAllocator] Memory Allocation Failed.")
 
         for var in op.inputs.values():
-            if isinstance(var, ConstantVariable):
-                continue
-
             while "inplace_src" in var.parameters:
                 var = var.parameters["inplace_src"]
             retain_count[var] -= 1
 
             if retain_count[var] == 0:
-                # 解放はこの層が終わってから！
+                # 解放はこの層が終わってから
                 analysis_table[var].end = t + 1
 
     return [x for x in analysis_table.values()]
@@ -229,6 +211,7 @@ def _optimize_allocation_offset(analysis_list: List[AllocationAnalysisData]):
     analysis_list = sorted(analysis_list, key=lambda x: x.variable.size, reverse=True)
     analysis_list = sorted(analysis_list, key=lambda x: x.end)
     analysis_list = sorted(analysis_list, key=lambda x: x.end - x.start, reverse=True)
+    analysis_list = sorted(analysis_list, key=lambda x: isinstance(x.variable, ConstantVariable), reverse=True)
     analysis_list = list(analysis_list)
     memory_offset_table = {}
     queue = list(analysis_list)
@@ -305,9 +288,10 @@ def _visualize_allocation(layout: MemoryLayout, graph: Graph, variables: List[Va
         def width(self):
             return f"calc({self.size * 100 / total_size}% + 1px)"
 
+        # noinspection PyMethodMayBeStatic
         def generate_html(self):
-            return f"""<div class="Allocation" style="top: {self.top}; height: {self.height}; left: {self.left}; width: {self.width}" """ \
-                   + f"""title="{", ".join(self.names)}
+            return f"""<div class="Allocation {"Constant" if isinstance(self.data.variable, ConstantVariable) else ""}"
+style="top: {self.top}; height: {self.height}; left: {self.left}; width: {self.width}" title="{", ".join(self.names)}
 size: {self.size}
 offset: {self.offset}
 lifetime: {self.data.start} - {self.data.end} 
@@ -345,7 +329,9 @@ lifetime: {self.data.start} - {self.data.end}
             overflow: hidden;
             background: #0f0;
         }
-
+        .Constant {
+            background: #ff0;
+        }
         p {
             margin: 0;
             white-space: nowrap;
